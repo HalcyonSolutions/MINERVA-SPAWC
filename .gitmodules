@@ -1,0 +1,3 @@
+[submodule "minerva"]
+	path = minerva
+	url = https://github.com/HalcyonSolutions/MINERVA.git
