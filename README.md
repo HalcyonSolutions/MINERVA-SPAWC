@@ -2,7 +2,7 @@
 
 Official implementation of the SPAWC 2026 paper:
 
-**"COMPRESSION OF POLICY-GUIDED ACTIONS FOR DISTRIBUTED GRAPH NAVIGATION"**
+**"The Information Cost of Multi-Hop Reasoning: Distributed Graph Navigation under Communication Constraints"**
 
 This repository builds on MINERVA and provides the scripts, configs, and pretrained assets used for evaluation and policy-entropy analysis.
 
@@ -78,9 +78,9 @@ If you use this code for your research, please cite our paper:
 
 ```
 @inproceedings{minerva_spawc_2026,
-  title={Compression of Policy-Guided Actions for Distributed Graph Navigation},
-  author={Hernandez, Eduin and Garcia, Luis, and Askar, Nurassyl, and Rini, Stefano},
-  booktitle={Proceedings of the IEEE International Conference on Signal Processing, Wireless Communications and Networking},
+  title={The Information Cost of Multi-Hop Reasoning: Distributed Graph Navigation under Communication Constraints},
+  author={Hernandez, Eduin E and Garcia, Luis F, and Askar, Nurassyl, and Rini, Stefano},
+  booktitle={2026 IEEE 27th International Workshop on Signal Processing and Artificial Intelligence in Wireless Communications},
   year={2026},
   url={https://github.com/HalcyonSolutions/MINERVA-SPAWC}
 }
