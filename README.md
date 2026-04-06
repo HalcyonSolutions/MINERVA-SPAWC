@@ -62,9 +62,17 @@ The repository is organized as follows:
 ```
 minerva_spawc/
 ├── .cache/                 # Cached files for processed datasets
+├── code/
+│   ├── evaluation_spawc.py # Evaluation entrypoint for SPAWC experiments
+│   └── policy_entropy/
+│       ├── eval.py         # Policy-entropy evaluation pipeline and summaries
+│       ├── metrics.py      # Core entropy/surprisal and identifier-bit utilities
+│       ├── artifacts.py    # Save/load helpers for policy-entropy artifacts
+│       └── plotting.py     # Plot generation for policy-entropy analysis
 ├── configs/                # YAML config files for different datasets
 ├── datasets/               # Datasets for evaluation (preprocessed and ready to use)
 ├── minerva/                # MINERVA codebase (submodule)
+├── run_spawc.sh            # Convenience script to launch configured runs
 └── saved_models/            # Pretrained models and evaluation outputs
     ├── kinshiphinton/      # Outputs for the Kinship-Hinton dataset
     ├── metaqa/             # Outputs for the MetaQA dataset
