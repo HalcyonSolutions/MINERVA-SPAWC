@@ -8,7 +8,6 @@ from __future__ import division
 import json
 import logging
 import os
-import re
 import sys
 
 from tqdm import tqdm
@@ -22,27 +21,22 @@ from minerva.code.data.setup import set_seeds
 from minerva.code.options import read_options
 
 from utils.plotting import generate_policy_entropy_plots
+from utils.basic import extract_dataset_name
 
 from typing import Dict, Any, List
 
 logger = logging.getLogger()
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
-def _lookup_vocab_ids(vocab: Dict[str, int], candidates: List[str]) -> List[int]:
-    """Return IDs for candidate token names that exist in the given vocabulary."""
-    if not vocab:
-        return []
-    return [int(vocab[name]) for name in candidates if name in vocab]
-
-def infer_valid_action_counts(
+def count_valid_action(
     next_relations: np.ndarray,
     next_entities: np.ndarray,
-    relation_vocab: Dict[str, int] = None,
-    entity_vocab: Dict[str, int] = None,
+    invalid_relation_ids: List[int] = None,
+    invalid_entity_ids: List[int] = None,
     fallback_log_probs: np.ndarray = None,
 ) -> np.ndarray:
     """
-    Infer the number of valid, non-padded actions for each example in a batched action set.
+    Count valid actions based on next_relations and next_entities, excluding any with invalid relation/entity IDs.
 
     Preference order:
       1. Count actions whose relation/entity IDs are not known padding IDs.
@@ -52,33 +46,22 @@ def infer_valid_action_counts(
     Args:
         next_relations: [B*R, A]
         next_entities: [B*R, A]
-        relation_vocab: relation vocabulary, optionally containing PAD tokens
-        entity_vocab: entity vocabulary, optionally containing PAD tokens
+        invalid_relation_ids: list of relation IDs to consider invalid (e.g. padding IDs), or None to ignore
+        invalid_entity_ids: list of entity IDs to consider invalid (e.g. padding IDs), or None to ignore
         fallback_log_probs: [B*R, A] log-probabilities, used only as fallback
 
     Returns:
-        valid_counts: [B*R] integer count of valid actions, clipped to at least 1
+        valid_counts: [B*R] integer count of valid actions, clipped to at least 1 (self loop)
     """
-    relation_vocab = relation_vocab or {}
-    entity_vocab = entity_vocab or {}
-
-    relation_pad_ids = set(_lookup_vocab_ids(
-        relation_vocab,
-        ["PAD", "DUMMY_START_RELATION",],
-    ))
-    entity_pad_ids = set(_lookup_vocab_ids(
-        entity_vocab,
-        ["PAD", "UNK",],
-    ))
 
     valid_mask = None
 
-    if relation_pad_ids:
-        rel_valid = ~np.isin(next_relations, list(relation_pad_ids))
+    if invalid_relation_ids:
+        rel_valid = ~np.isin(next_relations, invalid_relation_ids)
         valid_mask = rel_valid if valid_mask is None else (valid_mask & rel_valid)
 
-    if entity_pad_ids:
-        ent_valid = ~np.isin(next_entities, list(entity_pad_ids))
+    if invalid_entity_ids:
+        ent_valid = ~np.isin(next_entities, invalid_entity_ids)
         valid_mask = ent_valid if valid_mask is None else (valid_mask & ent_valid)
 
     if valid_mask is None:
@@ -121,7 +104,6 @@ def entropy_bits_from_log_probs(log_probs: np.ndarray, axis: int = -1) -> np.nda
     return entropy_bits
 
 
-
 def action_surprisal_bits_from_log_probs(log_probs: np.ndarray, action_idx: np.ndarray) -> np.ndarray:
     """
     Optional helper: realized code length in bits for the sampled action.
@@ -140,8 +122,13 @@ def action_surprisal_bits_from_log_probs(log_probs: np.ndarray, action_idx: np.n
     return -chosen_log_probs / np.log(2.0)
 
 
-
-def collect_policy_entropy_single_episode(trainer, sess, episode):
+def collect_policy_entropy_single_episode(
+    trainer: TrainerNLQ, 
+    sess: tf.compat.v1.Session,
+    episode: Any,
+    invalid_rel_ids: List[int] = None,
+    invalid_ent_ids: List[int] = None,
+) -> Dict[str, Any]:
     """
     Run one evaluation episode with beam=False and collect policy entropy.
 
@@ -221,11 +208,11 @@ def collect_policy_entropy_single_episode(trainer, sess, episode):
             test_log_probs, test_action_idx
         )  # [B*R]
 
-        valid_action_counts = infer_valid_action_counts(
+        valid_action_counts = count_valid_action(
             next_relations=state["next_relations"],
             next_entities=state["next_entities"],
-            relation_vocab=getattr(trainer, "relation_vocab", {}),
-            entity_vocab=getattr(trainer, "entity_vocab", {}),
+            invalid_relation_ids=invalid_rel_ids,
+            invalid_entity_ids=invalid_ent_ids,
             fallback_log_probs=test_log_probs,
         )  # [B*R]
         step_ideal_identifier_bits = ideal_uniform_identifier_bits(valid_action_counts)  # [B*R]
@@ -324,6 +311,20 @@ def analyze_policy_entropy_testset(trainer, sess, mode: str = "test", max_batche
     all_ideal_savings_bits = []
     all_fixed_savings_bits = []
 
+    invalid_rel_ids= [
+        trainer.relation_vocab['PAD'], 
+        trainer.relation_vocab['UNK'], 
+        trainer.relation_vocab['DUMMY_START_RELATION']
+    ]
+
+    invalid_ent_ids=[
+        trainer.entity_vocab['PAD'], 
+        trainer.entity_vocab['UNK']
+    ]
+
+    print(f"Invalid relation IDs: {invalid_rel_ids}")
+    print(f"Invalid entity IDs: {invalid_ent_ids}")
+
     question_num = trainer.environment.batcher.get_question_num()
     test_batch_size = trainer.environment.batcher.test_batch_size
     total_batches = (question_num + test_batch_size - 1) // test_batch_size
@@ -332,7 +333,13 @@ def analyze_policy_entropy_testset(trainer, sess, mode: str = "test", max_batche
         if max_batches is not None and batch_idx >= max_batches:
             break
 
-        batch_res = collect_policy_entropy_single_episode(trainer, sess, episode)
+        batch_res = collect_policy_entropy_single_episode(
+            trainer, 
+            sess, 
+            episode, 
+            invalid_rel_ids=invalid_rel_ids, 
+            invalid_ent_ids=invalid_ent_ids
+        )
         batch_results.append(batch_res)
 
         all_step_entropies.append(batch_res["per_step_entropy_bits"])         # [B, R, T]
@@ -381,19 +388,6 @@ def analyze_policy_entropy_testset(trainer, sess, mode: str = "test", max_batche
     }
 
     return summary, batch_results
-
-
-def infer_run_name(options: Dict[str, Any]) -> str:
-    """Infer a compact run label from available paths."""
-    value = options.get("data_input_dir", "")
-    if value:
-        name = os.path.basename(os.path.normpath(value))
-        if name:
-            safe_name = "".join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in name)
-            # remove any _ followed by 'v' and digits, to avoid merging version numbers into the name
-            safe_name = re.sub(r'_v\d+', '', safe_name)
-            return safe_name
-    return "test"
 
 
 if __name__ == '__main__':
@@ -501,22 +495,22 @@ if __name__ == '__main__':
             max_batches=None,
         )
 
-        print("=== Policy Entropy Summary ===")
+        logger.info("=== Policy Entropy Summary ===")
         for k, v in summary.items():
-            print(f"{k}: {v}")
+            logger.info(f"{k}: {v}")
 
-        run_name = infer_run_name(options)
+        dataset_name = extract_dataset_name(options)
         entropy_plot_paths = generate_policy_entropy_plots(
             summary=summary,
             batch_results=batch_results,
             output_dir=os.path.join(output_dir, "policy_entropy"),
-            run_name=run_name,
-            title_prefix=f"{run_name} Policy Entropy",
+            run_name=dataset_name,
+            title_prefix=f"{dataset_name.upper()} Policy Entropy",
         )
 
-        print("=== Saved Policy Entropy Plots ===")
+        logger.info("=== Saved Policy Entropy Plots ===")
         for k, v in entropy_plot_paths.items():
-            print(f"{k}: {v}")
+            logger.info(f"{k}: {v}")
 
-    logging.info("Evaluation completed. Closing Server")
+    logger.info("Evaluation completed. Closing Server")
     embedding_server.close()  # Close the embedding server connection
